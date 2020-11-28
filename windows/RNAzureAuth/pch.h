@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include <regex>
+#include <algorithm>
 #include <unknwn.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Foundation.h>
