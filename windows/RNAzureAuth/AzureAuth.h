@@ -6,6 +6,7 @@
 
 namespace RNAzureAuth {
 
+	using winrt::Windows::Foundation::Uri;
     using winrt::Windows::Storage::Streams::IBuffer;
     using winrt::Windows::Security::Cryptography::BinaryStringEncoding;
     using winrt::Windows::Security::Cryptography::CryptographicBuffer;
@@ -13,7 +14,8 @@ namespace RNAzureAuth {
     using winrt::Windows::Security::Cryptography::Core::HashAlgorithmNames;
 
 	REACT_STRUCT(OAuthParams);
-	struct OAuthParams {
+	struct OAuthParams
+	{
 		REACT_FIELD(state, L"state");
 		std::string state;
 		REACT_FIELD(nonce, L"nonce");
@@ -23,10 +25,45 @@ namespace RNAzureAuth {
 	};
 
 	REACT_MODULE(AzureAuth);
-	struct AzureAuth {
+	struct AzureAuth : public std::enable_shared_from_this<AzureAuth> {
+
+		winrt::Microsoft::ReactNative::ReactContext m_context;
+		std::function<void(JSValue)> callback;
+		bool closeOnLoad;
+
+		REACT_INIT(Initialize, L"Initialize");
+		void Initialize(winrt::Microsoft::ReactNative::ReactContext const& reactContext) noexcept
+		{
+			if (auto app = xaml::TryGetCurrentApplication())
+			{
+				app.Resuming(
+					winrt::auto_revoke,
+					[weakThis = weak_from_this()](
+						winrt::IInspectable const& /*sender*/,
+						winrt::Windows::ApplicationModel::EnteredBackgroundEventArgs const& /*e*/) noexcept {
+					if (auto strongThis = weakThis.lock())
+					{
+						if (strongThis->callback != nullptr)
+						{
+							if (strongThis->closeOnLoad)
+							{
+								strongThis->callback(JSValue{});
+							}
+							else
+							{
+								strongThis->callback(strongThis->createError("a0.session.user_cancelled", "User cancelled the Auth"));
+							}
+							strongThis->callback = nullptr;
+							strongThis->closeOnLoad = false;
+						}
+					}
+				});
+			}
+		}
 
 		REACT_CONSTANT_PROVIDER(GetConstants, L"getConstants");
-		void GetConstants(winrt::Microsoft::ReactNative::ReactConstantProvider &constants) noexcept {
+		void GetConstants(winrt::Microsoft::ReactNative::ReactConstantProvider &constants) noexcept
+		{
 			constants.Add(L"bundleIdentifier", winrt::to_string(winrt::Windows::ApplicationModel::Package::Current().Id().Name()));
 		}
 
@@ -38,6 +75,37 @@ namespace RNAzureAuth {
 			std::string verifier = randomDataBase64url(32);
 			OAuthParams params = OAuthParams{ state, nonce, verifier };
 			resolve(params);
+		}
+
+		REACT_METHOD(hide, L"hide");
+		void hide() noexcept
+		{
+			this->callback = nullptr;
+			this->closeOnLoad = false;
+		}
+
+		REACT_METHOD(showUrl, L"showUrl");
+		void showUrl(std::string urlString, bool closeOnLoad, const std::function<void(JSValue)>& callback) noexcept
+		{
+			this->callback = callback;
+			this->closeOnLoad = closeOnLoad;
+			auto success = winrt::Windows::System::Launcher::LaunchUriAsync(Uri(winrt::to_hstring(urlString)));
+			success.Completed([this](bool result)
+				{
+					if (!result)
+					{
+						this->callback(createError("a0.session.failed_load", "Failed to load url"));
+					}
+				}
+			);
+		}
+
+		JSValue createError(std::string error, std::string errorDescription) noexcept
+		{
+			JSValueObject obj = JSValueObject{};
+			obj["error"] = error;
+			obj["error_description"] = errorDescription;
+			return std::move(obj);
 		}
 
 		std::string randomDataBase64url(uint32_t length)
